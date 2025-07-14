@@ -156,18 +156,8 @@ class PixelOutputModel(nn.Module):
 
 
 # --- App Configuration ---
-DATASETS = {
-    "JSRT": {
-        "img_dir": "./processed_data_single_cell/jsrt/test/images",
-        "mask_dir": "./processed_data_single_cell/jsrt/test/masks",
-        "model_path": "./trained_models_single_cell/unet_jsrt_single_cell_best.pth"
-    },
-    "Montgomery": {
-        "img_dir": "./processed_data_single_cell/montgomery/test/images",
-        "mask_dir": "./processed_data_single_cell/montgomery/test/masks",
-        "model_path": "./trained_models_single_cell/unet_montgomery_single_cell_best.pth"
-    }
-}
+MODEL_DIR = "/home/mohaisen_mohammed/medical_images_segmentation/XAI/trained_models/"
+IMG_MASK_BASE_DIR = "./processed_data_single_cell/"
 IMG_SIZE = (256, 256)
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -291,18 +281,46 @@ def load_model(model_path, device):
 with st.sidebar:
     st.markdown("### 🎛️ Analysis Controls")
 
-    dataset = st.selectbox("📊 Dataset", list(DATASETS.keys()))
-    img_dir = DATASETS[dataset]["img_dir"]
-    mask_dir = DATASETS[dataset]["mask_dir"]
-    model_path = DATASETS[dataset]["model_path"]
+    # --- NEW MODEL SELECTION LOGIC ---
+    try:
+        if not os.path.isdir(MODEL_DIR):
+            st.error(f"Model directory not found: {MODEL_DIR}")
+            st.stop()
 
-    # Check if directories exist
+        model_files = sorted([f for f in os.listdir(MODEL_DIR) if f.endswith(".pth")])
+
+        if not model_files:
+            st.error(f"No model (.pth) files found in directory: {MODEL_DIR}")
+            st.stop()
+
+        selected_model_name = st.selectbox("🧠 Select Trained Model", model_files)
+        model_path = os.path.join(MODEL_DIR, selected_model_name)
+
+        # Determine dataset from model name
+        if "jsrt" in selected_model_name.lower():
+            dataset_name = "jsrt"
+        elif "montgomery" in selected_model_name.lower():
+            dataset_name = "montgomery"
+        else:
+            st.warning(
+                f"Could not determine dataset from model name '{selected_model_name}'. Defaulting to JSRT. Please name models like 'jsrt_...' or 'montgomery_...'.")
+            dataset_name = "jsrt"
+
+        img_dir = os.path.join(IMG_MASK_BASE_DIR, dataset_name, "test/images")
+        mask_dir = os.path.join(IMG_MASK_BASE_DIR, dataset_name, "test/masks")
+
+    except Exception as e:
+        st.error(f"Error loading models: {e}")
+        st.stop()
+
+    # Check if data directories exist
     if not os.path.exists(img_dir):
-        st.error(f"Image directory not found: {img_dir}")
+        st.error(f"Image directory for dataset '{dataset_name}' not found: {img_dir}")
         st.stop()
 
     if not os.path.exists(mask_dir):
-        st.warning(f"Mask directory not found: {mask_dir}. Proceeding without ground truth.")
+        st.warning(
+            f"Mask directory for dataset '{dataset_name}' not found: {mask_dir}. Proceeding without ground truth.")
 
     try:
         img_files = sorted(glob.glob(os.path.join(img_dir, "*.png")))
@@ -465,15 +483,20 @@ def annulus_mask(shape, center, inner_radius, outer_radius):
     return (dist_from_center >= inner_radius) & (dist_from_center <= outer_radius)
 
 
-def create_medical_grade_overlay(image_array, mask_array, x, y, radius):
+def create_medical_grade_overlay(image1_array, image2_array, title1, title2, x, y, radius):
     """Create medical-grade visualization with enhanced contrast using PALETTE colors"""
     fig, axes = plt.subplots(1, 2, figsize=(16, 8))
     fig.patch.set_facecolor('white')
 
-    # Enhanced medical imaging display
-    for ax, img, title in zip(axes, [image_array, mask_array],
-                              ["Original Chest X-ray", "Ground Truth Lung Mask"]):
-        ax.imshow(img, cmap="gray", vmin=0, vmax=255)
+    plot_configs = [
+        (image1_array, title1),
+        (image2_array, title2)
+    ]
+
+    for ax, (img, title) in zip(axes, plot_configs):
+        # Display the image using a grayscale colormap.
+        # Masks (0/1 values) will show up as black and white.
+        ax.imshow(img, cmap="gray")
 
         # Yellow point marker using PALETTE warning color
         ax.scatter(x, y, c=PALETTE['warning'], s=400, marker='o', linewidths=3,
@@ -684,8 +707,8 @@ def create_medical_metrics_dashboard(metrics_data):
 
         <div style="text-align: center; margin-top: 20px; padding: 15px; background: rgba(255,255,255,0.1); border-radius: 8px;">
             <p style="color: rgba(255,255,255,0.9); margin: 0; font-size: 14px;">
-                📍 Analysis Coordinates: ({metrics_data['x']}, {metrics_data['y']}) |
-                🔍 Analysis Radius: {metrics_data['radius']}px |
+                📍 Analysis Coordinates: ({metrics_data['x']}, {metrics_data['y']}) | 
+                🔍 Analysis Radius: {metrics_data['radius']}px | 
                 📏 Band Width: {metrics_data['band_width']}px
             </p>
         </div>
@@ -812,10 +835,9 @@ try:
 
     # Display enhanced image analysis
     st.markdown("## 🖼️ Medical Image Analysis")
-    create_medical_grade_overlay(np.array(image), np.array(mask), x, y, radius)
+    create_medical_grade_overlay(np.array(image), gt_mask_binary, "Original Image", "Ground Truth Mask", x, y, radius)
 
-    # Enhanced segmentation analysis with PALETTE colors
-    st.markdown("## 🔍 Advanced Segmentation Performance Analysis")
+    # Keep the metric calculations but remove the visual plot
     combined_mask = create_enhanced_combined_mask(pred_mask, gt_mask_binary)
 
     # Calculate comprehensive metrics including True Negatives
@@ -833,87 +855,6 @@ try:
     dice = 2 * intersection / (pred_sum + gt_sum) if (pred_sum + gt_sum) > 0 else 0
     sensitivity = intersection / gt_sum if gt_sum > 0 else 0
     precision = intersection / pred_sum if pred_sum > 0 else 0
-
-    # Create comprehensive visualization with PALETTE colors
-    fig = plt.figure(figsize=(20, 12))
-    fig.patch.set_facecolor('white')
-    gs = fig.add_gridspec(3, 4, height_ratios=[1, 1, 0.3], hspace=0.3, wspace=0.2)
-
-    # Top row - Original analysis
-    ax1 = fig.add_subplot(gs[0, 0])
-    ax1.imshow(np.array(image), cmap="gray")
-    if gt_sum > 0:
-        ax1.contour(gt_mask_binary, colors=PALETTE['info'], linewidths=3, alpha=0.9)
-    ax1.contour(pred_mask, colors=PALETTE['danger'], linewidths=3, alpha=0.9)
-    ax1.set_title('X-ray with Contours\n(Blue: GT, Red: Pred)', fontsize=14, fontweight='bold', color=PALETTE['text'])
-    ax1.axis('off')
-
-    ax2 = fig.add_subplot(gs[0, 1])
-    ax2.imshow(combined_mask)
-    ax2.set_title('Segmentation Analysis\n(Red: FP, Blue: FN, Green: TP)', fontsize=14, fontweight='bold',
-                  color=PALETTE['text'])
-    ax2.axis('off')
-
-    ax3 = fig.add_subplot(gs[0, 2])
-    ax3.imshow(pred_mask, cmap='Reds', alpha=0.9)
-    ax3.set_title('Model Prediction', fontsize=14, fontweight='bold', color=PALETTE['text'])
-    ax3.axis('off')
-
-    ax4 = fig.add_subplot(gs[0, 3])
-    ax4.imshow(gt_mask_binary, cmap='Blues', alpha=0.9)
-    ax4.set_title('Ground Truth', fontsize=14, fontweight='bold', color=PALETTE['text'])
-    ax4.axis('off')
-
-    # Bottom row - Detailed masks with PALETTE colors
-    ax5 = fig.add_subplot(gs[1, 0])
-    fp_colored = np.zeros((*fp_mask.shape, 3))
-    fp_colored[fp_mask] = PALETTE['fp']
-    ax5.imshow(fp_colored)
-    ax5.set_title(f'False Positives\n({np.sum(fp_mask)} pixels)', fontsize=12, fontweight='bold', color=PALETTE['text'])
-    ax5.axis('off')
-
-    ax6 = fig.add_subplot(gs[1, 1])
-    fn_colored = np.zeros((*fn_mask.shape, 3))
-    fn_colored[fn_mask] = PALETTE['fn']
-    ax6.imshow(fn_colored)
-    ax6.set_title(f'False Negatives\n({np.sum(fn_mask)} pixels)', fontsize=12, fontweight='bold', color=PALETTE['text'])
-    ax6.axis('off')
-
-    ax7 = fig.add_subplot(gs[1, 2])
-    tp_colored = np.zeros((*tp_mask.shape, 3))
-    tp_colored[tp_mask] = PALETTE['tp']
-    ax7.imshow(tp_colored)
-    ax7.set_title(f'True Positives\n({np.sum(tp_mask)} pixels)', fontsize=12, fontweight='bold', color=PALETTE['text'])
-    ax7.axis('off')
-
-    ax8 = fig.add_subplot(gs[1, 3])
-    # Overlay visualization
-    overlay = np.array(image)
-    overlay_colored = np.stack([overlay, overlay, overlay], axis=-1) / 255.0
-    overlay_colored[fp_mask] = PALETTE['fp']
-    overlay_colored[fn_mask] = PALETTE['fn']
-    overlay_colored[tp_mask] = PALETTE['tp']
-    ax8.imshow(overlay_colored)
-    ax8.set_title('Clinical Overlay', fontsize=12, fontweight='bold', color=PALETTE['text'])
-    ax8.axis('off')
-
-    # Performance metrics including TN count
-    ax_metrics = fig.add_subplot(gs[2, :])
-    ax_metrics.axis('off')
-    metrics_text = f"""
-    **CLINICAL PERFORMANCE METRICS:**
-    IoU (Jaccard): **{iou:.3f}** | Dice Coefficient: **{dice:.3f}** | Sensitivity (Recall): **{sensitivity:.3f}** | Precision: **{precision:.3f}**
-    **Pixel Counts** - True Positives: **{intersection:,}** | False Positives: **{np.sum(fp_mask):,}** | False Negatives: **{np.sum(fn_mask):,}** | True Negatives: **{np.sum(tn_mask):,}**
-    """
-    ax_metrics.text(0.5, 0.5, metrics_text, ha='center', va='center', fontsize=14,
-                    bbox=dict(boxstyle="round,pad=0.5", facecolor=PALETTE['light_gray'], alpha=0.8),
-                    fontweight='bold', color=PALETTE['text'])
-
-    plt.suptitle(f'Comprehensive Medical Segmentation Analysis - {img_name}',
-                 fontsize=18, fontweight='bold', y=0.98, color=PALETTE['primary'])
-
-    st.pyplot(fig)
-    plt.close(fig)
 
     # Analysis execution
     if analyze_button:
@@ -1158,7 +1099,7 @@ try:
                         significance = 'Low Clinical Significance'
 
                     analysis_results_store.update({
-                        'dataset': dataset,
+                        'dataset': dataset_name,
                         'image_name': img_name,
                         'method': effective_method,
                         'significance': significance,
@@ -1399,7 +1340,7 @@ except Exception as e:
     ./processed_data_single_cell/jsrt/test/masks/
     ./processed_data_single_cell/montgomery/test/images/
     ./processed_data_single_cell/montgomery/test/masks/
-    ./trained_models_single_cell/
+    /home/mohaisen_mohammed/medical_images_segmentation/XAI/trained_models/
     """)
 
 # Application footer with PALETTE styling
