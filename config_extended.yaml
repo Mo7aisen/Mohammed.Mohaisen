@@ -1,0 +1,28 @@
+# Extended configuration for additional training requirements
+# Based on supervisor's meeting notes
+
+# Inherit all settings from main config
+extends: config.yaml
+
+# Additional experiments needed for overfitting demonstrations
+extended_experiments:
+  unet_montgomery_full_250:
+    dataset: montgomery
+    epochs: 250
+    data_fraction: 1.0
+    resume_from: "./outputs/unet_montgomery_full_150/final_model.pth"  # Continue from 150 epochs
+    
+  unet_montgomery_half_300:
+    dataset: montgomery
+    epochs: 300
+    data_fraction: 0.5
+    resume_from: "./outputs/unet_montgomery_half_150/final_model.pth"  # Continue from 150 epochs
+    
+  unet_jsrt_half_250:
+    dataset: jsrt
+    epochs: 250
+    data_fraction: 0.5
+    resume_from: "./outputs/unet_jsrt_half_150/final_model.pth"  # Continue from 150 epochs
+
+# Checkpoint saving strategy for extended training
+extended_save_freq: 10  # Save every 10 epochs for extended training
