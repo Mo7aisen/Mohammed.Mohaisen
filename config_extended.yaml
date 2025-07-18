@@ -11,13 +11,13 @@ extended_experiments:
     epochs: 250
     data_fraction: 1.0
     resume_from: "./outputs/unet_montgomery_full_150/final_model.pth"  # Continue from 150 epochs
-    
+
   unet_montgomery_half_300:
     dataset: montgomery
     epochs: 300
     data_fraction: 0.5
     resume_from: "./outputs/unet_montgomery_half_150/final_model.pth"  # Continue from 150 epochs
-    
+
   unet_jsrt_half_250:
     dataset: jsrt
     epochs: 250

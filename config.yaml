@@ -1,0 +1,66 @@
+# This file is the central configuration for the entire project.
+# It defines datasets, experiments, and global settings.
+
+# --- Global Settings ---
+output_base_dir: "./outputs"
+save_freq: 5
+batch_size: 8
+learning_rate: 0.0001
+num_workers: 4
+early_stopping_patience: 15
+
+# --- Dataset Definitions ---
+# Defines the location of the raw data.
+datasets:
+  montgomery:
+    path: "/home/mohaisen_mohammed/Datasets/MontgomeryDataset"
+    images: "CXR_png"
+    masks: "ManualMask"
+  jsrt:
+    path: "/home/mohaisen_mohammed/Datasets/JSRT"
+    images: "images"
+    masks: "masks_png"
+
+# --- Experiment Definitions ---
+# Each key under 'experiments' defines a unique run.
+# The run scripts will iterate through this list.
+experiments:
+  unet_montgomery_full_150:
+    dataset: montgomery
+    epochs: 150
+    data_fraction: 1.0
+
+  unet_montgomery_full_50:
+    dataset: montgomery
+    epochs: 50
+    data_fraction: 1.0
+
+  unet_montgomery_half_150:
+    dataset: montgomery
+    epochs: 150
+    data_fraction: 0.5
+
+  unet_montgomery_half_50:
+    dataset: montgomery
+    epochs: 50
+    data_fraction: 0.5
+
+  unet_jsrt_full_150:
+    dataset: jsrt
+    epochs: 150
+    data_fraction: 1.0
+
+  unet_jsrt_full_50:
+    dataset: jsrt
+    epochs: 50
+    data_fraction: 1.0
+
+  unet_jsrt_half_150:
+    dataset: jsrt
+    epochs: 150
+    data_fraction: 0.5
+
+  unet_jsrt_half_50:
+    dataset: jsrt
+    epochs: 50
+    data_fraction: 0.5
