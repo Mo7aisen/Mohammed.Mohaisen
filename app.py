@@ -10,13 +10,15 @@ import yaml
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import plotly.express as px
+from matplotlib.patches import Circle
+import matplotlib.patches as patches
 
 # --- Page Configuration ---
 st.set_page_config(
     page_title="🫁 XAI Lung Segmentation Analysis",
     page_icon="🫁",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # --- Constants and Configuration ---
@@ -32,42 +34,29 @@ except Exception as e:
 
 # --- Enhanced XAI Analysis Functions ---
 def calculate_weighted_median_distance(attr_map, center_x, center_y, min_abs_attr=None, max_abs_attr=None):
-    """
-    Calculate weighted median distance based on attribution values
-    Enhanced version based on supervisor's feedback
-    """
+    """Calculate weighted median distance based on attribution values"""
     attr_z = attr_map.copy()
 
-    # Set thresholds if not provided
     if min_abs_attr is None:
-        min_abs_attr = np.percentile(np.abs(attr_z), 10)  # Bottom 10% threshold
+        min_abs_attr = np.percentile(np.abs(attr_z), 5)  # More conservative threshold
     if max_abs_attr is None:
-        max_abs_attr = np.percentile(np.abs(attr_z), 90)  # Top 90% threshold
+        max_abs_attr = np.percentile(np.abs(attr_z), 95)
 
-    # Apply thresholding as suggested
     selected_mask = (np.abs(attr_z) >= min_abs_attr) & (np.abs(attr_z) <= max_abs_attr)
 
     if np.any(selected_mask):
         selected_indices = np.where(selected_mask)
-
-        # Calculate distances from center point
         distances = np.sqrt((selected_indices[0] - center_y) ** 2 + (selected_indices[1] - center_x) ** 2)
-
-        # Use absolute attribution values as weights
         weights = np.abs(attr_z[selected_mask])
 
         if len(distances) > 0:
-            # Sort by distance
             sorted_idx = np.argsort(distances)
             sorted_distances = distances[sorted_idx]
             sorted_weights = weights[sorted_idx]
-
-            # Calculate cumulative weights
             cumulative_weights = np.cumsum(sorted_weights)
             total_weight = cumulative_weights[-1] if len(cumulative_weights) > 0 else 0
 
             if total_weight > 0:
-                # Find weighted median (50% of total weight)
                 median_idx = np.where(cumulative_weights >= 0.5 * total_weight)[0]
                 if len(median_idx) > 0:
                     median_distance = sorted_distances[median_idx[0]]
@@ -77,55 +66,40 @@ def calculate_weighted_median_distance(attr_map, center_x, center_y, min_abs_att
 
 
 def calculate_enhanced_cumulative_histogram(attr_map, center_x, center_y):
-    """
-    Enhanced cumulative histogram calculation based on supervisor's feedback
-    """
-    # Get all pixels and their distances/weights
+    """Enhanced cumulative histogram calculation with smoothing"""
     y_coords, x_coords = np.mgrid[0:attr_map.shape[0], 0:attr_map.shape[1]]
     distances = np.sqrt((y_coords - center_y) ** 2 + (x_coords - center_x) ** 2)
     weights = np.abs(attr_map)
 
-    # Flatten arrays
     distances_flat = distances.flatten()
     weights_flat = weights.flatten()
 
-    # Remove zero weights to avoid noise
-    non_zero_mask = weights_flat > 0
-    distances_clean = distances_flat[non_zero_mask]
-    weights_clean = weights_flat[non_zero_mask]
+    # Remove very small weights to reduce noise
+    threshold = np.percentile(weights_flat, 5)
+    significant_mask = weights_flat > threshold
+    distances_clean = distances_flat[significant_mask]
+    weights_clean = weights_flat[significant_mask]
 
     if len(distances_clean) == 0:
         return None, None
 
-    # Sort by distance
     sorted_idx = np.argsort(distances_clean)
     sorted_distances = distances_clean[sorted_idx]
     sorted_weights = weights_clean[sorted_idx]
-
-    # Calculate cumulative weights
     cumulative_weights = np.cumsum(sorted_weights)
 
-    # Normalize to [0, 1]
     if cumulative_weights[-1] > 0:
         normalized_cumulative = cumulative_weights / cumulative_weights[-1]
     else:
         normalized_cumulative = cumulative_weights
 
-    # Create histogram with distance bins
+    # Create smoother binning
     max_dist = int(np.ceil(sorted_distances.max()))
-    distance_bins = np.arange(0, max_dist + 1)
+    distance_bins = np.linspace(0, max_dist, min(max_dist + 1, 200))  # Smoother binning
 
-    # Bin the cumulative values
-    binned_cumulative = []
-    for dist in distance_bins:
-        # Find cumulative value at this distance
-        mask = sorted_distances <= dist
-        if np.any(mask):
-            binned_cumulative.append(normalized_cumulative[mask][-1])
-        else:
-            binned_cumulative.append(0.0)
+    binned_cumulative = np.interp(distance_bins, sorted_distances, normalized_cumulative)
 
-    return distance_bins, np.array(binned_cumulative)
+    return distance_bins, binned_cumulative
 
 
 # --- Helper Functions ---
@@ -233,153 +207,253 @@ def load_training_log(run_name):
 
 
 def get_original_image_path(image_name, dataset_name):
-    """Get path to original image file"""
+    """Get path to original UNPROCESSED image file"""
     if dataset_name.lower() in DATASETS:
         dataset_config = DATASETS[dataset_name.lower()]
         base_path = os.path.join(dataset_config['path'], dataset_config['images'])
         return os.path.join(base_path, image_name)
 
-    # Fallback paths
     if dataset_name.lower() == 'montgomery':
         return os.path.join("/home/mohaisen_mohammed/Datasets/MontgomeryDataset/CXR_png/", image_name)
-    else:  # jsrt
+    else:
         return os.path.join("/home/mohaisen_mohammed/Datasets/JSRT/images/", image_name)
 
 
-def plot_training_curves(training_df, title):
-    """Plot training and validation loss curves"""
+def load_original_image(image_path):
+    """Load original unprocessed X-ray image with proper scaling"""
+    try:
+        # Load original image without any preprocessing
+        original_image = Image.open(image_path).convert("L")
+        original_array = np.array(original_image)
+
+        # Get original dimensions
+        original_height, original_width = original_array.shape
+
+        return original_array, (original_width, original_height)
+    except Exception as e:
+        st.error(f"Error loading original image: {e}")
+        return None, None
+
+
+def map_coordinates_to_analysis_space(x, y, original_size, analysis_size=(256, 256)):
+    """Map coordinates from original image space to analysis space (256x256)"""
+    orig_w, orig_h = original_size
+    anal_w, anal_h = analysis_size
+
+    # Scale coordinates
+    mapped_x = int((x / orig_w) * anal_w)
+    mapped_y = int((y / orig_h) * anal_h)
+
+    # Ensure coordinates are within bounds
+    mapped_x = max(0, min(mapped_x, anal_w - 1))
+    mapped_y = max(0, min(mapped_y, anal_h - 1))
+
+    return mapped_x, mapped_y
+
+
+def create_clickable_image_selector(image_array, current_x, current_y, original_size, column_id):
+    """Create an interactive image where users can click to select coordinates"""
+    fig, ax = plt.subplots(figsize=(12, 12))
+
+    # Display the original image
+    ax.imshow(image_array, cmap='gray', extent=[0, original_size[0], original_size[1], 0])
+
+    # Add professional crosshair
+    ax.axhline(y=current_y, color='#FF4444', linestyle='-', alpha=0.8, linewidth=3)
+    ax.axvline(x=current_x, color='#FF4444', linestyle='-', alpha=0.8, linewidth=3)
+
+    # Add target marker with multiple visual elements
+    circle1 = Circle((current_x, current_y), radius=15, color='#FF4444', fill=False, linewidth=4)
+    circle2 = Circle((current_x, current_y), radius=10, color='white', fill=False, linewidth=2)
+    ax.add_patch(circle1)
+    ax.add_patch(circle2)
+    ax.plot(current_x, current_y, 'o', color='#FF4444', markersize=8,
+            markerfacecolor='white', markeredgecolor='#FF4444', markeredgewidth=3)
+
+    # Add subtle grid for reference
+    grid_spacing = max(original_size[0] // 8, original_size[1] // 8)
+    for i in range(0, original_size[1], grid_spacing):
+        ax.axhline(y=i, color='white', alpha=0.1, linewidth=0.5)
+    for j in range(0, original_size[0], grid_spacing):
+        ax.axvline(x=j, color='white', alpha=0.1, linewidth=0.5)
+
+    ax.set_title(f"🎯 Click to Select Analysis Point\nCurrent: ({current_x}, {current_y})",
+                 fontsize=16, pad=20, fontweight='bold', color='#2C3E50')
+    ax.set_xlabel("X Coordinate (pixels)", fontsize=14, fontweight='bold')
+    ax.set_ylabel("Y Coordinate (pixels)", fontsize=14, fontweight='bold')
+
+    ax.set_xlim(0, original_size[0])
+    ax.set_ylim(original_size[1], 0)  # Invert Y axis for image coordinates
+
+    plt.tight_layout()
+    return fig
+
+
+def display_professional_attribution_map(attr_map, center_x, center_y, title, numerical_values=None):
+    """Display professional attribution map with clean visualization"""
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
+
+    # Apply Gaussian smoothing to reduce noise
+    from scipy import ndimage
+    smoothed_attr = ndimage.gaussian_filter(attr_map, sigma=1.0)
+
+    # Enhanced color normalization
+    vmax = np.percentile(np.abs(smoothed_attr), 98)
+    vmin = -vmax
+
+    # Main attribution map with professional colormap
+    im1 = ax1.imshow(smoothed_attr, cmap='RdBu_r', interpolation='bilinear',
+                     vmin=vmin, vmax=vmax, alpha=0.9)
+
+    # Professional crosshair
+    ax1.axhline(y=center_y, color='#00FF00', linestyle='-', alpha=1.0, linewidth=3)
+    ax1.axvline(x=center_x, color='#00FF00', linestyle='-', alpha=1.0, linewidth=3)
+
+    # Target marker
+    circle = Circle((center_x, center_y), radius=8, color='#00FF00', fill=False, linewidth=3)
+    ax1.add_patch(circle)
+    ax1.plot(center_x, center_y, 'o', color='#00FF00', markersize=6,
+             markerfacecolor='white', markeredgecolor='#00FF00', markeredgewidth=2)
+
+    ax1.set_title(f"{title} - Smoothed View\n🎯 Analysis Point: ({center_x}, {center_y})",
+                  fontsize=14, fontweight='bold', color='#2C3E50')
+    ax1.set_xlabel("X Coordinate", fontsize=12, fontweight='bold')
+    ax1.set_ylabel("Y Coordinate", fontsize=12, fontweight='bold')
+
+    # Colorbar for main map
+    cbar1 = plt.colorbar(im1, ax=ax1, shrink=0.8, aspect=20)
+    cbar1.set_label('Attribution Score\n🔴 Positive | 🔵 Negative',
+                    rotation=270, labelpad=20, fontsize=12, fontweight='bold')
+
+    # Raw attribution map for comparison
+    im2 = ax2.imshow(attr_map, cmap='RdBu_r', interpolation='nearest',
+                     vmin=vmin, vmax=vmax, alpha=0.9)
+
+    ax2.axhline(y=center_y, color='#00FF00', linestyle='-', alpha=1.0, linewidth=3)
+    ax2.axvline(x=center_x, color='#00FF00', linestyle='-', alpha=1.0, linewidth=3)
+
+    circle2 = Circle((center_x, center_y), radius=8, color='#00FF00', fill=False, linewidth=3)
+    ax2.add_patch(circle2)
+    ax2.plot(center_x, center_y, 'o', color='#00FF00', markersize=6,
+             markerfacecolor='white', markeredgecolor='#00FF00', markeredgewidth=2)
+
+    ax2.set_title(f"{title} - Raw Data\n🎯 Analysis Point: ({center_x}, {center_y})",
+                  fontsize=14, fontweight='bold', color='#2C3E50')
+    ax2.set_xlabel("X Coordinate", fontsize=12, fontweight='bold')
+    ax2.set_ylabel("Y Coordinate", fontsize=12, fontweight='bold')
+
+    # Colorbar for raw map
+    cbar2 = plt.colorbar(im2, ax=ax2, shrink=0.8, aspect=20)
+    cbar2.set_label('Attribution Score\n🔴 Positive | 🔵 Negative',
+                    rotation=270, labelpad=20, fontsize=12, fontweight='bold')
+
+    # Add statistical information
+    pos_attr = np.sum(attr_map[attr_map > 0])
+    neg_attr = np.sum(attr_map[attr_map < 0])
+    max_pos = np.max(attr_map)
+    min_neg = np.min(attr_map)
+    center_value = attr_map[center_y, center_x] if 0 <= center_y < attr_map.shape[0] and 0 <= center_x < attr_map.shape[
+        1] else 0
+
+    stats_text = (f"Center Value: {center_value:.6f}\n"
+                  f"Max Positive: {max_pos:.6f}\n"
+                  f"Min Negative: {min_neg:.6f}\n"
+                  f"Total Positive: {pos_attr:.3f}\n"
+                  f"Total Negative: {neg_attr:.3f}")
+
+    ax1.text(0.02, 0.98, stats_text, transform=ax1.transAxes, fontsize=10,
+             verticalalignment='top',
+             bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9, edgecolor='gray'))
+
+    plt.tight_layout()
+    return fig
+
+
+def create_professional_cumulative_plot(distance_bins, cumulative_values, center_point, median_dist=None):
+    """Create a professional, smooth cumulative attribution plot"""
     fig = go.Figure()
 
-    # Add training loss
+    # Create smooth line with gradient fill
     fig.add_trace(go.Scatter(
-        x=training_df['epoch'],
-        y=training_df['train_loss'],
-        mode='lines+markers',
-        name='Training Loss',
-        line=dict(color='blue', width=2),
-        marker=dict(size=3)
+        x=distance_bins,
+        y=cumulative_values,
+        mode='lines',
+        name='Cumulative Attribution',
+        line=dict(color='#2E86AB', width=4, shape='spline', smoothing=1.3),
+        fill='tonexty',
+        fillcolor='rgba(46, 134, 171, 0.2)',
+        hovertemplate='<b>Distance:</b> %{x:.1f} pixels<br><b>Cumulative Weight:</b> %{y:.3f}<extra></extra>'
     ))
 
-    # Add validation loss
-    fig.add_trace(go.Scatter(
-        x=training_df['epoch'],
-        y=training_df['val_loss'],
-        mode='lines+markers',
-        name='Validation Loss',
-        line=dict(color='red', width=2),
-        marker=dict(size=3)
-    ))
+    # Add median line if available
+    if median_dist is not None:
+        fig.add_vline(
+            x=median_dist,
+            line_dash="dash",
+            line_color="#A23B72",
+            line_width=3,
+            annotation_text=f"Weighted Median: {median_dist:.1f}px",
+            annotation_position="top right",
+            annotation_font_size=12,
+            annotation_font_color="#A23B72"
+        )
 
-    # Mark best epoch
-    best_epoch = training_df.loc[training_df['val_loss'].idxmin()]
-    fig.add_vline(
-        x=best_epoch['epoch'],
-        line_dash="dash",
-        line_color="green",
-        annotation_text=f"Best Model (Epoch {int(best_epoch['epoch'])})"
-    )
+    # Add markers at key points
+    key_points = [0.25, 0.5, 0.75, 0.9]
+    for point in key_points:
+        idx = np.argmin(np.abs(cumulative_values - point))
+        if idx < len(distance_bins):
+            fig.add_trace(go.Scatter(
+                x=[distance_bins[idx]],
+                y=[cumulative_values[idx]],
+                mode='markers',
+                marker=dict(size=10, color='#F18F01', line=dict(width=2, color='white')),
+                name=f'{int(point * 100)}% Mark',
+                showlegend=False,
+                hovertemplate=f'<b>{int(point * 100)}% Attribution</b><br>Distance: %{{x:.1f}} pixels<extra></extra>'
+            ))
 
     fig.update_layout(
-        title=f"Training Curves - {title}",
-        xaxis_title="Epoch",
-        yaxis_title="Loss",
-        hovermode='x unified',
-        height=300,
-        margin=dict(t=50, b=50, l=50, r=50)
+        title=dict(
+            text=f"<b>📈 Professional Cumulative Attribution Analysis</b><br><sub>From Point ({center_point[0]}, {center_point[1]})</sub>",
+            x=0.5,
+            font=dict(size=18, color='#2C3E50')
+        ),
+        xaxis_title="<b>Distance from Analysis Center (pixels)</b>",
+        yaxis_title="<b>Normalized Cumulative Attribution Weight</b>",
+        height=500,
+        font=dict(size=14),
+        plot_bgcolor='rgba(248, 249, 250, 0.8)',
+        paper_bgcolor='white',
+        hovermode='x',
+        showlegend=False
     )
 
-    return fig
-
-
-def display_enhanced_attribution_map(attr_map, center_x, center_y, title, image_size=(256, 256)):
-    """
-    Display enhanced attribution map with grid centers and better visualization
-    """
-    fig, ax = plt.subplots(figsize=(8, 8))
-
-    # Display attribution map with RdBu_r colormap (red-blue)
-    im = ax.imshow(attr_map, cmap='RdBu_r', interpolation='nearest')
-
-    # Add crosshair at center point
-    ax.axhline(y=center_y, color='yellow', linestyle='--', alpha=0.9, linewidth=2)
-    ax.axvline(x=center_x, color='yellow', linestyle='--', alpha=0.9, linewidth=2)
-    ax.plot(center_x, center_y, 'yo', markersize=10, markerfacecolor='yellow',
-            markeredgecolor='black', markeredgewidth=2)
-
-    # Add grid to show cell centers (as requested by supervisor)
-    grid_spacing = 16  # Show grid every 16 pixels
-    for i in range(0, image_size[0], grid_spacing):
-        ax.axhline(y=i, color='white', alpha=0.3, linewidth=0.5)
-    for j in range(0, image_size[1], grid_spacing):
-        ax.axvline(x=j, color='white', alpha=0.3, linewidth=0.5)
-
-    ax.set_title(f"{title}\nAnalysis Point: ({center_x}, {center_y})", fontsize=14, pad=20)
-    ax.set_xlabel("X Coordinate (pixels)", fontsize=12)
-    ax.set_ylabel("Y Coordinate (pixels)", fontsize=12)
-
-    # Add colorbar with better formatting
-    cbar = plt.colorbar(im, ax=ax, shrink=0.8, aspect=20)
-    cbar.set_label('Attribution Score', rotation=270, labelpad=20, fontsize=12)
-
-    # Set axis limits and ticks
-    ax.set_xlim(0, image_size[1])
-    ax.set_ylim(image_size[0], 0)  # Invert y-axis for image coordinates
-
-    return fig
-
-
-def display_enhanced_uncertainty_map(uncertainty_map, title, image_size=(256, 256)):
-    """
-    Display enhanced uncertainty map synchronized with attribution map size
-    """
-    fig, ax = plt.subplots(figsize=(8, 8))
-
-    # Display uncertainty map
-    im = ax.imshow(uncertainty_map, cmap='viridis', interpolation='nearest')
-
-    # Add grid to match attribution map (synchronized as requested)
-    grid_spacing = 16
-    for i in range(0, image_size[0], grid_spacing):
-        ax.axhline(y=i, color='white', alpha=0.3, linewidth=0.5)
-    for j in range(0, image_size[1], grid_spacing):
-        ax.axvline(x=j, color='white', alpha=0.3, linewidth=0.5)
-
-    ax.set_title(title, fontsize=14, pad=20)
-    ax.set_xlabel("X Coordinate (pixels)", fontsize=12)
-    ax.set_ylabel("Y Coordinate (pixels)", fontsize=12)
-
-    # Add colorbar
-    cbar = plt.colorbar(im, ax=ax, shrink=0.8, aspect=20)
-    cbar.set_label('Uncertainty Score', rotation=270, labelpad=20, fontsize=12)
-
-    # Set axis limits
-    ax.set_xlim(0, image_size[1])
-    ax.set_ylim(image_size[0], 0)
-
-    return fig
-
-
-def display_image_with_crosshair(image, center_x, center_y, title):
-    """Display image with crosshair at specified point"""
-    fig, ax = plt.subplots(figsize=(8, 8))
-    ax.imshow(image, cmap='gray')
-
-    # Add crosshair
-    ax.axhline(y=center_y, color='red', linestyle='--', alpha=0.8, linewidth=2)
-    ax.axvline(x=center_x, color='red', linestyle='--', alpha=0.8, linewidth=2)
-    ax.plot(center_x, center_y, 'ro', markersize=10, markerfacecolor='red',
-            markeredgecolor='white', markeredgewidth=2)
-
-    ax.set_title(f"{title}\nCenter Point: ({center_x}, {center_y})", fontsize=14, pad=20)
-    ax.set_xlabel("X Coordinate (pixels)", fontsize=12)
-    ax.set_ylabel("Y Coordinate (pixels)", fontsize=12)
+    # Enhanced grid and styling
+    fig.update_xaxes(
+        gridcolor='rgba(0,0,0,0.1)',
+        gridwidth=1,
+        showline=True,
+        linewidth=2,
+        linecolor='black',
+        mirror=True
+    )
+    fig.update_yaxes(
+        gridcolor='rgba(0,0,0,0.1)',
+        gridwidth=1,
+        showline=True,
+        linewidth=2,
+        linecolor='black',
+        mirror=True,
+        range=[0, 1.05]
+    )
 
     return fig
 
 
 def display_column(column_id, available_runs):
-    """Display analysis column with enhanced features"""
-    st.markdown(f"### Analysis Column {column_id}")
+    """Display analysis column with click-based coordinate selection"""
+    st.markdown(f"### 🔬 Analysis Column {column_id}")
 
     # Run selection
     selected_run = st.selectbox(
@@ -421,13 +495,12 @@ def display_column(column_id, available_runs):
         st.error(f"Could not load data for {selected_run}/{selected_state}/{selected_split}")
         return None
 
-    # Image selection with enhanced display (showing Dice scores as requested)
+    # Image selection
     results = run_data.get("per_sample_results", [])
     if not results:
         st.warning("No sample results found.")
         return None
 
-    # Sort by dice score for better selection
     sorted_results = sorted(results, key=lambda x: x.get("dice_score", 0), reverse=True)
 
     selected_image_data = st.selectbox(
@@ -441,8 +514,12 @@ def display_column(column_id, available_runs):
         st.warning("No images available.")
         return None
 
-    # Display individual image Dice score prominently (as requested by supervisor)
-    st.metric("Selected Image Dice Score", f"{selected_image_data['dice_score']:.4f}")
+    # Display metrics
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("🎯 Dice Score", f"{selected_image_data['dice_score']:.4f}")
+    with col2:
+        st.metric("📐 IoU Score", f"{selected_image_data['iou_score']:.4f}")
 
     # Load XAI data
     with st.spinner("Loading XAI data..."):
@@ -460,152 +537,326 @@ def display_column(column_id, available_runs):
     st.markdown(
         f"State: `{selected_state.replace('_', ' ').title()}` | Split: `{selected_split.upper()}` | Epoch: `{epoch_used}`")
 
-    # ROW 1: Original X-ray and Ground Truth (2 images only)
-    st.markdown("**Original Image and Ground Truth:**")
-    col1, col2 = st.columns(2)
-
+    # Load ORIGINAL unprocessed image
     try:
         original_image_path = get_original_image_path(
             selected_image_data['image_name'],
             parsed_name['dataset']
         )
 
-        if safe_file_check(original_image_path):
-            original_image = Image.open(original_image_path)
-        else:
-            original_image = Image.new('L', (256, 256), color=128)
-            st.warning(f"Original image not found")
+        original_array, original_size = load_original_image(original_image_path)
+        if original_array is None:
+            st.error("Could not load original image")
+            return None
 
         gt_mask = npz_data['ground_truth']
 
-        with col1:
-            st.image(original_image, caption="Original X-ray", use_container_width=True)
-
-        with col2:
-            st.image(gt_mask, caption="Ground Truth", use_container_width=True, clamp=True)
-
     except Exception as e:
-        st.error(f"Error displaying images: {e}")
+        st.error(f"Error loading images: {e}")
+        return None
 
-    # ROW 2: Enhanced Uncertainty Map
-    st.markdown("**Uncertainty Analysis:**")
-    try:
-        if 'uncertainty_map' in npz_data:
-            fig = display_enhanced_uncertainty_map(
-                npz_data['uncertainty_map'],
-                "Prediction Uncertainty Map"
-            )
-            st.pyplot(fig)
-            plt.close()
-        else:
-            st.warning("Uncertainty map not available")
-    except Exception as e:
-        st.error(f"Error displaying uncertainty map: {e}")
-
-    # ROW 3: Enhanced Interactive Point Selection
-    st.markdown("**Interactive Analysis Point Selection:**")
-
-    # Enhanced coordinate controls with +/- buttons (as requested)
-    col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 2])
+    # ROW 1: Original X-ray and Ground Truth
+    st.markdown("**🖼️ Original Unprocessed Image and Ground Truth:**")
+    col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("X-", key=f"x_minus_{column_id}"):
-            if f"x_{column_id}" in st.session_state:
-                st.session_state[f"x_{column_id}"] = max(0, st.session_state[f"x_{column_id}"] - 1)
+        st.image(original_array, caption=f"Original X-ray ({original_size[0]}x{original_size[1]})",
+                 use_container_width=True, clamp=True)
 
     with col2:
-        x_coord = st.number_input("X", min_value=0, max_value=255, value=128, key=f"x_{column_id}")
+        st.image(gt_mask, caption="Ground Truth (256x256)", use_container_width=True, clamp=True)
 
-    with col3:
-        if st.button("X+", key=f"x_plus_{column_id}"):
-            if f"x_{column_id}" in st.session_state:
-                st.session_state[f"x_{column_id}"] = min(255, st.session_state[f"x_{column_id}"] + 1)
+    # ROW 2: Interactive Coordinate Selection
+    st.markdown("**🎯 Interactive Coordinate Selection:**")
 
-    col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 2])
+    # Initialize coordinates in session state
+    if f"orig_x_{column_id}" not in st.session_state:
+        st.session_state[f"orig_x_{column_id}"] = original_size[0] // 2
+    if f"orig_y_{column_id}" not in st.session_state:
+        st.session_state[f"orig_y_{column_id}"] = original_size[1] // 2
 
-    with col1:
-        if st.button("Y-", key=f"y_minus_{column_id}"):
-            if f"y_{column_id}" in st.session_state:
-                st.session_state[f"y_{column_id}"] = max(0, st.session_state[f"y_{column_id}"] - 1)
+    # Coordinate input with sliders for full image coverage
+    coord_col1, coord_col2, coord_col3 = st.columns([1, 1, 1])
 
-    with col2:
-        y_coord = st.number_input("Y", min_value=0, max_value=255, value=128, key=f"y_{column_id}")
+    with coord_col1:
+        orig_x = st.slider(
+            "🔄 X Coordinate (Original)",
+            0, original_size[0] - 1,
+            st.session_state[f"orig_x_{column_id}"],
+            key=f"orig_x_slider_{column_id}",
+            help=f"Select X coordinate (0 to {original_size[0] - 1})"
+        )
 
-    with col3:
-        if st.button("Y+", key=f"y_plus_{column_id}"):
-            if f"y_{column_id}" in st.session_state:
-                st.session_state[f"y_{column_id}"] = min(255, st.session_state[f"y_{column_id}"] + 1)
+    with coord_col2:
+        orig_y = st.slider(
+            "🔄 Y Coordinate (Original)",
+            0, original_size[1] - 1,
+            st.session_state[f"orig_y_{column_id}"],
+            key=f"orig_y_slider_{column_id}",
+            help=f"Select Y coordinate (0 to {original_size[1] - 1})"
+        )
 
-    with col5:
-        show_ig_button = st.button("Show Integrated Gradients Analysis", key=f"ig_{column_id}")
+    with coord_col3:
+        if st.button("🎯 Reset to Center", key=f"center_{column_id}"):
+            st.session_state[f"orig_x_{column_id}"] = original_size[0] // 2
+            st.session_state[f"orig_y_{column_id}"] = original_size[1] // 2
+            st.rerun()
 
-    # Display original image with crosshair
+    # Update session state
+    st.session_state[f"orig_x_{column_id}"] = orig_x
+    st.session_state[f"orig_y_{column_id}"] = orig_y
+
+    # Map coordinates to analysis space
+    mapped_x, mapped_y = map_coordinates_to_analysis_space(orig_x, orig_y, original_size)
+
+    # Display coordinate information
+    st.info(
+        f"🎯 **Original Coordinates:** X={orig_x}, Y={orig_y} | **Analysis Coordinates:** X={mapped_x}, Y={mapped_y}")
+
+    # Professional Analyze Button
+    analyze_button = st.button(
+        "🔬 Analyze Selected Point",
+        key=f"analyze_{column_id}",
+        help="Click to run Integrated Gradients analysis on the selected point",
+        type="primary"
+    )
+
+    # Display clickable image selector
     try:
-        fig = display_image_with_crosshair(original_image, x_coord, y_coord, "Analysis Point Selection")
-        st.pyplot(fig)
+        fig = create_clickable_image_selector(original_array, orig_x, orig_y, original_size, column_id)
+        st.pyplot(fig, use_container_width=True)
         plt.close()
     except Exception as e:
-        st.error(f"Error displaying crosshair image: {e}")
+        st.error(f"Error displaying image selector: {e}")
 
-    # Enhanced Integrated Gradients Analysis
-    if show_ig_button:
-        st.markdown("**Enhanced Integrated Gradients Analysis:**")
+    # ROW 3: Analysis Results (shown when button is clicked or automatically)
+    if analyze_button or f"analysis_done_{column_id}" in st.session_state:
+        st.session_state[f"analysis_done_{column_id}"] = True
+
+        st.markdown("**🧠 Professional Integrated Gradients Analysis:**")
         try:
             if 'ig_map' in npz_data:
-                # Display enhanced IG map
-                fig = display_enhanced_attribution_map(
+                # Display professional attribution map
+                fig = display_professional_attribution_map(
                     npz_data['ig_map'],
-                    x_coord, y_coord,
-                    "Integrated Gradients Attribution Map"
+                    mapped_x, mapped_y,
+                    "Integrated Gradients Attribution"
                 )
-                st.pyplot(fig)
+                st.pyplot(fig, use_container_width=True)
                 plt.close()
 
-                # Calculate enhanced weighted median distance
+                # Calculate metrics
                 median_dist, sorted_distances, cumulative_weights, total_weight = calculate_weighted_median_distance(
-                    npz_data['ig_map'], x_coord, y_coord
+                    npz_data['ig_map'], mapped_x, mapped_y
                 )
 
-                if median_dist is not None:
-                    st.metric("Weighted Median Distance", f"{median_dist:.2f} pixels")
+                # Display numerical values
+                st.markdown("**📊 Numerical Analysis Results:**")
 
-                # Enhanced cumulative histogram
+                metric_col1, metric_col2, metric_col3 = st.columns(3)
+
+                with metric_col1:
+                    center_value = npz_data['ig_map'][mapped_y, mapped_x] if 0 <= mapped_y < npz_data['ig_map'].shape[
+                        0] and 0 <= mapped_x < npz_data['ig_map'].shape[1] else 0
+                    st.metric("🎯 Center Attribution", f"{center_value:.6f}")
+
+                with metric_col2:
+                    if median_dist is not None:
+                        st.metric("📏 Weighted Median Distance", f"{median_dist:.2f} px")
+                    else:
+                        st.metric("📏 Weighted Median Distance", "N/A")
+
+                with metric_col3:
+                    max_attribution = np.max(np.abs(npz_data['ig_map']))
+                    st.metric("📈 Max Attribution", f"{max_attribution:.6f}")
+
+                # Enhanced cumulative histogram with professional styling
                 distance_bins, cumulative_values = calculate_enhanced_cumulative_histogram(
-                    npz_data['ig_map'], x_coord, y_coord
+                    npz_data['ig_map'], mapped_x, mapped_y
                 )
 
                 if distance_bins is not None:
-                    # Plot enhanced cumulative histogram
-                    fig, ax = plt.subplots(figsize=(10, 6))
-                    ax.plot(distance_bins, cumulative_values, marker='o', linewidth=2, markersize=4, color='blue')
+                    # Create professional cumulative plot
+                    fig = create_professional_cumulative_plot(
+                        distance_bins, cumulative_values, (orig_x, orig_y), median_dist
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
 
-                    if median_dist is not None:
-                        ax.axvline(x=median_dist, color='red', linestyle='--', linewidth=2,
-                                   label=f'Weighted Median: {median_dist:.2f}px')
+                    # Display detailed numerical values
+                    st.markdown("**🔢 Detailed Numerical Values:**")
 
-                    ax.set_title(f"Enhanced Cumulative Weighted Attribution\nFrom Point ({x_coord}, {y_coord})",
-                                 fontsize=14)
-                    ax.set_xlabel("Distance from Center (pixels)", fontsize=12)
-                    ax.set_ylabel("Normalized Cumulative Weight", fontsize=12)
-                    ax.grid(True, alpha=0.3)
-                    ax.set_ylim(0, 1.05)
-                    ax.legend()
+                    # Create expandable section for detailed data
+                    with st.expander("📋 View Detailed Attribution Data", expanded=False):
+                        # Attribution statistics around the selected point
+                        radius = 10
+                        y_start = max(0, mapped_y - radius)
+                        y_end = min(npz_data['ig_map'].shape[0], mapped_y + radius + 1)
+                        x_start = max(0, mapped_x - radius)
+                        x_end = min(npz_data['ig_map'].shape[1], mapped_x + radius + 1)
 
-                    st.pyplot(fig)
-                    plt.close()
+                        local_patch = npz_data['ig_map'][y_start:y_end, x_start:x_end]
+
+                        detail_col1, detail_col2 = st.columns(2)
+
+                        with detail_col1:
+                            st.markdown("**Local Region Statistics (±10px):**")
+                            st.write(f"• Mean Attribution: {np.mean(local_patch):.6f}")
+                            st.write(f"• Std Attribution: {np.std(local_patch):.6f}")
+                            st.write(f"• Min Attribution: {np.min(local_patch):.6f}")
+                            st.write(f"• Max Attribution: {np.max(local_patch):.6f}")
+
+                        with detail_col2:
+                            st.markdown("**Global Image Statistics:**")
+                            st.write(f"• Global Mean: {np.mean(npz_data['ig_map']):.6f}")
+                            st.write(f"• Global Std: {np.std(npz_data['ig_map']):.6f}")
+                            st.write(f"• Global Min: {np.min(npz_data['ig_map']):.6f}")
+                            st.write(f"• Global Max: {np.max(npz_data['ig_map']):.6f}")
+
+                        # Histogram of attribution values
+                        st.markdown("**Attribution Value Distribution:**")
+                        hist_fig = go.Figure()
+                        hist_fig.add_trace(go.Histogram(
+                            x=npz_data['ig_map'].flatten(),
+                            nbinsx=50,
+                            name="Attribution Distribution",
+                            marker_color='rgba(46, 134, 171, 0.7)',
+                            marker_line=dict(width=1, color='white')
+                        ))
+                        hist_fig.update_layout(
+                            title="Distribution of Attribution Values",
+                            xaxis_title="Attribution Value",
+                            yaxis_title="Frequency",
+                            height=300
+                        )
+                        st.plotly_chart(hist_fig, use_container_width=True)
 
             else:
                 st.warning("Integrated Gradients data not available")
         except Exception as e:
             st.error(f"Error displaying Integrated Gradients: {e}")
 
-    # ROW 4: Training Curve
-    st.markdown("**Training History:**")
+    # ROW 4: Uncertainty Analysis
+    st.markdown("**🔬 Uncertainty Analysis:**")
+    try:
+        if 'uncertainty_map' in npz_data:
+            fig, ax = plt.subplots(figsize=(12, 10))
+
+            im = ax.imshow(npz_data['uncertainty_map'], cmap='plasma', interpolation='bilinear', alpha=0.9)
+
+            # Add crosshair at mapped coordinates
+            ax.axhline(y=mapped_y, color='#00FF00', linestyle='-', alpha=1.0, linewidth=3)
+            ax.axvline(x=mapped_x, color='#00FF00', linestyle='-', alpha=1.0, linewidth=3)
+
+            circle = Circle((mapped_x, mapped_y), radius=8, color='#00FF00', fill=False, linewidth=3)
+            ax.add_patch(circle)
+            ax.plot(mapped_x, mapped_y, 'o', color='#00FF00', markersize=6,
+                    markerfacecolor='white', markeredgecolor='#00FF00', markeredgewidth=2)
+
+            ax.set_title(f"Model Prediction Uncertainty\n🎯 Analysis Point: ({mapped_x}, {mapped_y})",
+                         fontsize=16, pad=20, fontweight='bold', color='#2C3E50')
+            ax.set_xlabel("X Coordinate (pixels)", fontsize=14, fontweight='bold')
+            ax.set_ylabel("Y Coordinate (pixels)", fontsize=14, fontweight='bold')
+
+            cbar = plt.colorbar(im, ax=ax, shrink=0.8, aspect=25, pad=0.02)
+            cbar.set_label('Uncertainty Level\n🟡 High | 🟣 Low',
+                           rotation=270, labelpad=25, fontsize=14, fontweight='bold')
+
+            # Add uncertainty statistics
+            uncertainty_at_point = npz_data['uncertainty_map'][mapped_y, mapped_x] if 0 <= mapped_y < \
+                                                                                      npz_data['uncertainty_map'].shape[
+                                                                                          0] and 0 <= mapped_x < \
+                                                                                      npz_data['uncertainty_map'].shape[
+                                                                                          1] else 0
+            mean_uncertainty = np.mean(npz_data['uncertainty_map'])
+            max_uncertainty = np.max(npz_data['uncertainty_map'])
+
+            stats_text = (f"Point Uncertainty: {uncertainty_at_point:.4f}\n"
+                          f"Mean Uncertainty: {mean_uncertainty:.4f}\n"
+                          f"Max Uncertainty: {max_uncertainty:.4f}")
+
+            ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, fontsize=11,
+                    verticalalignment='top',
+                    bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9, edgecolor='gray'))
+
+            ax.set_xlim(0, 256)
+            ax.set_ylim(256, 0)
+
+            plt.tight_layout()
+            st.pyplot(fig, use_container_width=True)
+            plt.close()
+        else:
+            st.warning("Uncertainty map not available")
+    except Exception as e:
+        st.error(f"Error displaying uncertainty map: {e}")
+
+    # ROW 5: Training History
+    st.markdown("**📈 Training History:**")
     try:
         training_df = load_training_log(selected_run)
         if training_df is not None:
-            fig = plot_training_curves(training_df,
-                                       f"{parsed_name['dataset']} {parsed_name['data_size']} {parsed_name['epochs']}ep")
+            fig = go.Figure()
+
+            # Add training loss
+            fig.add_trace(go.Scatter(
+                x=training_df['epoch'],
+                y=training_df['train_loss'],
+                mode='lines+markers',
+                name='Training Loss',
+                line=dict(color='#2E86AB', width=3),
+                marker=dict(size=6, color='#2E86AB', line=dict(width=2, color='white')),
+                hovertemplate='<b>Training Loss</b><br>Epoch: %{x}<br>Loss: %{y:.6f}<extra></extra>'
+            ))
+
+            # Add validation loss
+            fig.add_trace(go.Scatter(
+                x=training_df['epoch'],
+                y=training_df['val_loss'],
+                mode='lines+markers',
+                name='Validation Loss',
+                line=dict(color='#A23B72', width=3),
+                marker=dict(size=6, color='#A23B72', line=dict(width=2, color='white')),
+                hovertemplate='<b>Validation Loss</b><br>Epoch: %{x}<br>Loss: %{y:.6f}<extra></extra>'
+            ))
+
+            # Mark best epoch
+            best_epoch = training_df.loc[training_df['val_loss'].idxmin()]
+            fig.add_vline(
+                x=best_epoch['epoch'],
+                line_dash="dash",
+                line_color="#F18F01",
+                line_width=3,
+                annotation_text=f"Best Model (Epoch {int(best_epoch['epoch'])})",
+                annotation_position="top"
+            )
+
+            fig.update_layout(
+                title=dict(
+                    text=f"<b>Training Progress - {parsed_name['dataset']} {parsed_name['data_size']} {parsed_name['epochs']}ep</b>",
+                    x=0.5,
+                    font=dict(size=16, color='#2C3E50')
+                ),
+                xaxis_title="<b>Epoch</b>",
+                yaxis_title="<b>Loss</b>",
+                hovermode='x unified',
+                height=400,
+                margin=dict(t=80, b=60, l=60, r=60),
+                plot_bgcolor='rgba(248, 249, 250, 0.8)',
+                paper_bgcolor='white',
+                font=dict(size=12),
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="right",
+                    x=1
+                )
+            )
+
+            fig.update_xaxes(gridcolor='lightgray', gridwidth=1, griddash='dot', showline=True, linewidth=2,
+                             linecolor='black')
+            fig.update_yaxes(gridcolor='lightgray', gridwidth=1, griddash='dot', showline=True, linewidth=2,
+                             linecolor='black')
+
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.warning("Training log not available")
@@ -614,24 +865,30 @@ def display_column(column_id, available_runs):
 
     # Return data for combined analysis
     try:
-        distance_bins, cumulative_values = calculate_enhanced_cumulative_histogram(npz_data['ig_map'], x_coord, y_coord)
+        if f"analysis_done_{column_id}" in st.session_state:
+            distance_bins, cumulative_values = calculate_enhanced_cumulative_histogram(
+                npz_data['ig_map'], mapped_x, mapped_y
+            )
 
-        return {
-            "run_name": f"Col {column_id}: {parsed_name['dataset']} {parsed_name['data_size']} {parsed_name['epochs']}",
-            "hist_data": {"distance_bins": distance_bins, "cumulative_values": cumulative_values},
-            "state": selected_state,
-            "epoch_used": epoch_used,
-            "center_point": (x_coord, y_coord),
-            "dice_score": selected_image_data['dice_score']
-        }
+            return {
+                "run_name": f"Col {column_id}: {parsed_name['dataset']} {parsed_name['data_size']} {parsed_name['epochs']}",
+                "hist_data": {"distance_bins": distance_bins, "cumulative_values": cumulative_values},
+                "state": selected_state,
+                "epoch_used": epoch_used,
+                "center_point": (orig_x, orig_y),
+                "analysis_point": (mapped_x, mapped_y),
+                "dice_score": selected_image_data['dice_score'],
+                "original_size": original_size
+            }
     except Exception as e:
         st.error(f"Error calculating histogram: {e}")
-        return None
+
+    return None
 
 
 def display_training_analysis():
-    """Display training curve analysis"""
-    st.header("📈 Training Analysis")
+    """Display enhanced training curve analysis"""
+    st.header("📈 Professional Training Analysis")
 
     available_runs = get_available_runs()
     if not available_runs:
@@ -642,18 +899,18 @@ def display_training_analysis():
     selected_runs = st.multiselect(
         "Select runs to compare:",
         available_runs,
-        default=available_runs[:4] if len(available_runs) > 4 else available_runs,
-        format_func=lambda x: " | ".join(parse_run_name(x).values())
+        default=available_runs[:6] if len(available_runs) > 6 else available_runs,
+        format_func=lambda x: " | ".join(parse_run_name(x).values()),
+        help="Select multiple runs to compare their training progress"
     )
 
     if not selected_runs:
         st.info("Please select at least one run to analyze.")
         return
 
-    # Create comparison plot using Plotly
+    # Create enhanced comparison plot
     fig = go.Figure()
-
-    colors = px.colors.qualitative.Set1
+    colors = ['#2E86AB', '#A23B72', '#F18F01', '#C73E1D', '#7209B7', '#2A9D8F', '#E9C46A', '#F4A261']
 
     for i, run_name in enumerate(selected_runs):
         try:
@@ -661,67 +918,133 @@ def display_training_analysis():
             if training_df is not None:
                 parsed = parse_run_name(run_name)
                 label = f"{parsed['dataset']} {parsed['data_size']} {parsed['epochs']}ep"
-
                 color = colors[i % len(colors)]
 
-                # Plot training curve
+                # Training curve
                 fig.add_trace(go.Scatter(
                     x=training_df['epoch'],
                     y=training_df['train_loss'],
                     mode='lines+markers',
                     name=f"{label} (Train)",
-                    line=dict(color=color, dash='solid'),
-                    marker=dict(size=3)
+                    line=dict(color=color, dash='solid', width=3),
+                    marker=dict(size=6, color=color, line=dict(width=2, color='white')),
+                    hovertemplate=f'<b>{label} Training</b><br>Epoch: %{{x}}<br>Loss: %{{y:.6f}}<extra></extra>'
                 ))
 
-                # Plot validation curve
+                # Validation curve
                 fig.add_trace(go.Scatter(
                     x=training_df['epoch'],
                     y=training_df['val_loss'],
                     mode='lines+markers',
                     name=f"{label} (Val)",
-                    line=dict(color=color, dash='dash'),
-                    marker=dict(size=3)
+                    line=dict(color=color, dash='dash', width=3),
+                    marker=dict(size=6, color=color, line=dict(width=2, color='white')),
+                    hovertemplate=f'<b>{label} Validation</b><br>Epoch: %{{x}}<br>Loss: %{{y:.6f}}<extra></extra>'
                 ))
+
+                # Mark best epoch
+                best_epoch = training_df.loc[training_df['val_loss'].idxmin()]
+                fig.add_vline(
+                    x=best_epoch['epoch'],
+                    line_dash="dot",
+                    line_color=color,
+                    line_width=2,
+                    opacity=0.7,
+                    annotation_text=f"{label} Best",
+                    annotation_position="top",
+                    annotation_font_size=10
+                )
 
         except Exception as e:
             st.error(f"Error processing {run_name}: {e}")
 
     fig.update_layout(
-        title="Training Progress Comparison",
-        xaxis_title="Epoch",
-        yaxis_title="Loss",
+        title=dict(
+            text="<b>📊 Comprehensive Training Progress Comparison</b>",
+            x=0.5,
+            font=dict(size=20, color='#2C3E50')
+        ),
+        xaxis_title="<b>Epoch</b>",
+        yaxis_title="<b>Loss</b>",
         hovermode='x unified',
-        height=600
+        height=700,
+        margin=dict(t=100, b=80, l=80, r=150),
+        plot_bgcolor='rgba(248, 249, 250, 0.8)',
+        paper_bgcolor='white',
+        font=dict(size=14),
+        legend=dict(
+            orientation="v",
+            yanchor="top",
+            y=1,
+            xanchor="left",
+            x=1.02,
+            font=dict(size=11)
+        )
     )
+
+    fig.update_xaxes(gridcolor='lightgray', gridwidth=1, griddash='dot', showline=True, linewidth=2, linecolor='black',
+                     mirror=True)
+    fig.update_yaxes(gridcolor='lightgray', gridwidth=1, griddash='dot', showline=True, linewidth=2, linecolor='black',
+                     mirror=True)
 
     st.plotly_chart(fig, use_container_width=True)
 
 
 # --- Main App ---
 def main():
-    st.title("🫁 Enhanced XAI Analysis for Lung Segmentation")
-    st.markdown("*Interactive analysis with enhanced attribution mapping and weighted median distance calculation*")
+    st.title("🫁 Professional XAI Analysis for Lung Segmentation")
+    st.markdown("*Advanced Interactive Analysis with Original Image Support and Expert-Level Visualizations*")
     st.markdown("---")
 
-    # Sidebar for navigation
-    st.sidebar.title("🎛️ Navigation")
+    # Very narrow sidebar
+    with st.sidebar:
+        st.markdown("### 🎛️ Navigation")
+        page = st.radio(
+            "Analysis Mode:",
+            ["🔬 Comparative Analysis", "📈 Training Analysis"],
+            help="Select the type of analysis"
+        )
 
-    page = st.sidebar.radio(
-        "Choose Analysis:",
-        ["🔬 Comparative Analysis", "📈 Training Analysis"]
-    )
+        st.markdown("---")
+        st.markdown("### 💡 Tips")
+        if page == "🔬 Comparative Analysis":
+            st.markdown("""
+            **🎯 New Features:**
+            - Original unprocessed images
+            - Full coordinate coverage
+            - Click-to-analyze functionality
+            - Professional visualizations
+            - Detailed numerical analysis
+            """)
+        else:
+            st.markdown("""
+            **📈 Training Analysis:**
+            - Compare multiple models
+            - Interactive hover details
+            - Best epoch markers
+            - Professional styling
+            """)
 
+    # Main content
     if page == "🔬 Comparative Analysis":
-        st.header("🔬 Enhanced Comparative XAI Analysis")
+        st.header("🔬 Professional Comparative XAI Analysis")
+        st.markdown("*Analyze original unprocessed X-ray images with expert-level attribution mapping*")
 
         available_runs = get_available_runs()
         if not available_runs:
-            st.error("No evaluation results found. Please run experiments first.")
+            st.error("❌ No evaluation results found. Please run experiments first.")
             return
 
-        # Create three columns for comparison
-        col1, col2, col3 = st.columns(3, gap="large")
+        st.info("""
+        🎯 **How to Use:** 
+        1. Select models in each column
+        2. Use sliders to choose any pixel on the original image
+        3. Click 'Analyze Selected Point' to run Integrated Gradients analysis
+        4. View professional attribution maps and detailed numerical results
+        """)
+
+        # Three columns for comparison
+        col1, col2, col3 = st.columns(3, gap="medium")
 
         all_column_data = []
 
@@ -740,94 +1063,177 @@ def main():
             if result3:
                 all_column_data.append(result3)
 
-        # Enhanced combined comparison plot
+        # Enhanced combined comparison
         if len(all_column_data) > 1:
             st.markdown("---")
-            st.subheader("🔗 Enhanced Combined Model Comparison")
+            st.subheader("🔗 Professional Multi-Model Comparison")
 
             try:
                 fig = go.Figure()
-                colors = px.colors.qualitative.Set1
+                colors = ['#2E86AB', '#A23B72', '#F18F01', '#C73E1D', '#7209B7']
 
                 for i, item in enumerate(all_column_data):
                     color = colors[i % len(colors)]
                     hist_data = item["hist_data"]
 
                     if hist_data["distance_bins"] is not None and hist_data["cumulative_values"] is not None:
-                        # Main attribution curve
                         fig.add_trace(go.Scatter(
                             x=hist_data["distance_bins"],
                             y=hist_data["cumulative_values"],
-                            mode='lines+markers',
+                            mode='lines',
                             name=f'{item["run_name"]} ({item["state"]})',
-                            line=dict(color=color, width=2),
-                            marker=dict(size=4)
+                            line=dict(color=color, width=4, shape='spline', smoothing=1.3),
+                            hovertemplate=f'<b>{item["run_name"]}</b><br>Distance: %{{x:.1f}} px<br>Cumulative Weight: %{{y:.3f}}<extra></extra>'
                         ))
 
                 fig.update_layout(
-                    title="Enhanced Comparison of Cumulative Weighted Attributions",
-                    xaxis_title="Distance from Center (pixels)",
-                    yaxis_title="Normalized Cumulative Weight",
-                    hovermode='x unified',
-                    height=500,
-                    yaxis=dict(range=[0, 1.05])
+                    title=dict(
+                        text="<b>📊 Professional Comparison of Cumulative Weighted Attributions</b>",
+                        x=0.5,
+                        font=dict(size=18, color='#2C3E50')
+                    ),
+                    xaxis_title="<b>Distance from Analysis Center (pixels)</b>",
+                    yaxis_title="<b>Normalized Cumulative Attribution Weight</b>",
+                    hovermode='x',
+                    height=600,
+                    yaxis=dict(range=[0, 1.05]),
+                    font=dict(size=14),
+                    plot_bgcolor='rgba(248, 249, 250, 0.8)',
+                    paper_bgcolor='white',
+                    margin=dict(t=80, b=60, l=60, r=150)
                 )
+
+                fig.update_xaxes(gridcolor='rgba(0,0,0,0.1)', gridwidth=1, showline=True, linewidth=2,
+                                 linecolor='black', mirror=True)
+                fig.update_yaxes(gridcolor='rgba(0,0,0,0.1)', gridwidth=1, showline=True, linewidth=2,
+                                 linecolor='black', mirror=True)
 
                 st.plotly_chart(fig, use_container_width=True)
 
-                # Enhanced summary statistics table
-                st.subheader("📊 Enhanced Comparison Statistics")
+                # Summary table
+                st.subheader("📊 Detailed Model Comparison")
                 stats_data = []
                 for item in all_column_data:
                     stats_data.append({
                         "Model": item["run_name"],
                         "State": item["state"].replace('_', ' ').title(),
-                        "Analysis Point": f"({item['center_point'][0]}, {item['center_point'][1]})",
-                        "Image Dice Score": f"{item['dice_score']:.4f}",
-                        "Epoch Used": item.get("epoch_used", "N/A")
+                        "Original Point": f"({item['center_point'][0]}, {item['center_point'][1]})",
+                        "Analysis Point": f"({item['analysis_point'][0]}, {item['analysis_point'][1]})",
+                        "Dice Score": f"{item['dice_score']:.4f}",
+                        "Image Size": f"{item['original_size'][0]}x{item['original_size'][1]}"
                     })
 
-                st.dataframe(pd.DataFrame(stats_data), use_container_width=True)
+                df_stats = pd.DataFrame(stats_data)
+                st.dataframe(df_stats, use_container_width=True, hide_index=True)
 
             except Exception as e:
-                st.error(f"Error creating comparison plot: {e}")
+                st.error(f"❌ Error creating comparison plot: {e}")
 
         elif len(all_column_data) == 1:
-            st.info("💡 Select models in multiple columns to see comparative analysis.")
+            st.info("💡 **Tip:** Select models in multiple columns for advanced comparative analysis.")
 
     elif page == "📈 Training Analysis":
         display_training_analysis()
 
 
 if __name__ == "__main__":
-    # Set enhanced page style
+    # Professional styling
     st.markdown("""
     <style>
-        .stApp > header {
-            background-color: transparent;
+        /* Hide Streamlit elements */
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+        header {visibility: hidden;}
+
+        /* Narrow sidebar */
+        .css-1d391kg {
+            width: 180px !important;
+            min-width: 180px !important;
+            max-width: 180px !important;
+            background: linear-gradient(180deg, #f8f9fa 0%, #e9ecef 100%);
         }
-        .main > div {
-            padding-top: 1rem;
+
+        /* Maximize content */
+        .css-1y4p8pa {
+            max-width: calc(100% - 200px) !important;
+            padding-left: 1rem;
         }
+
+        /* Typography */
         h1 {
-            color: #1f77b4;
+            color: #2C3E50;
+            font-weight: 700;
+            font-size: 2.3rem !important;
         }
-        .metric-container {
-            background-color: #f0f2f6;
+        h2, h3 {
+            color: #34495E;
+            font-weight: 600;
+        }
+
+        /* Professional button styling */
+        .stButton > button[kind="primary"] {
+            background: linear-gradient(135deg, #2E86AB 0%, #A23B72 100%) !important;
+            border: none !important;
+            border-radius: 8px !important;
+            color: white !important;
+            font-weight: 600 !important;
+            padding: 0.6rem 1.2rem !important;
+            font-size: 0.9rem !important;
+            transition: all 0.3s ease !important;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1) !important;
+        }
+
+        .stButton > button[kind="primary"]:hover {
+            transform: translateY(-2px) !important;
+            box-shadow: 0 6px 12px rgba(46, 134, 171, 0.3) !important;
+        }
+
+        /* Slider enhancements */
+        .stSlider > div > div > div > div {
+            background-color: #2E86AB !important;
+            height: 6px !important;
+        }
+
+        .stSlider > div > div > div > div > div {
+            background-color: #A23B72 !important;
+            border: 2px solid white !important;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2) !important;
+        }
+
+        /* Metric styling */
+        [data-testid="metric-container"] {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 10px;
             padding: 1rem;
-            border-radius: 0.5rem;
-            margin: 0.5rem 0;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
         }
-        .stExpander {
-            border: 1px solid #e6e6e6;
-            border-radius: 0.5rem;
+
+        [data-testid="metric-container"] > div {
+            color: white;
         }
-        .stButton > button {
-            width: 100%;
-            border-radius: 0.5rem;
+
+        /* Info boxes */
+        .stInfo {
+            background: linear-gradient(135deg, #E8F6F3 0%, #D5F2EC 100%);
+            border: 1px solid #2E86AB;
+            border-radius: 10px;
+            padding: 1rem;
         }
-        .stNumberInput > div > div > input {
-            text-align: center;
+
+        /* Expander styling */
+        .streamlit-expanderHeader {
+            background-color: rgba(248, 249, 250, 0.8);
+            border-radius: 8px;
+            font-weight: 600;
+        }
+
+        /* DataFrame styling */
+        .dataframe {
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            border: 1px solid #E1E5E9;
         }
     </style>
     """, unsafe_allow_html=True)
@@ -835,5 +1241,5 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        st.error(f"Application error: {e}")
-        st.markdown("Please check your setup and try again.")
+        st.error(f"❌ Application error: {e}")
+        st.markdown("🔧 Please check your setup and try again.")
