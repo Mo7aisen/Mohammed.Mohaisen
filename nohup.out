@@ -296,3 +296,23 @@ Traceback (most recent call last):
   File "/home/mohaisen_mohammed/miniconda3/envs/bme/lib/python3.11/site-packages/streamlit/delta_generator.py", line 351, in wrapper
     raise StreamlitAPIException(message)
 streamlit.errors.StreamlitAPIException: `apply()` is not a valid Streamlit command.
+2025-07-19 12:35:52.874 Received event for non-watched file: /home/mohaisen_mohammed/xai/app.py
+2025-07-19 12:35:52.874 Received event for non-watched file: /home/mohaisen_mohammed/xai/app.py
+2025-07-19 12:35:52.875 Received event for non-watched file: /home/mohaisen_mohammed/xai/app.py
+2025-07-19 12:35:52.876 Received event for non-watched file: /home/mohaisen_mohammed/xai/app.py
+2025-07-19 12:35:52.876 Received event for non-watched file: /home/mohaisen_mohammed/xai/app.py
+2025-07-19 12:36:10.789 Received event for non-watched file: /home/mohaisen_mohammed/xai/app.py
+2025-07-19 12:36:10.789 Received event for non-watched file: /home/mohaisen_mohammed/xai/app.py
+2025-07-19 12:36:10.789 Received event for non-watched file: /home/mohaisen_mohammed/xai/app.py
+2025-07-19 12:36:10.790 Received event for non-watched file: /home/mohaisen_mohammed/xai/app.py
+2025-07-19 12:36:10.790 Received event for non-watched file: /home/mohaisen_mohammed/xai/app.py
+2025-07-19 12:47:11.891 Received event for non-watched file: /home/mohaisen_mohammed/xai/app.py
+2025-07-19 12:47:11.891 Received event for non-watched file: /home/mohaisen_mohammed/xai/app.py
+2025-07-19 12:47:11.891 Received event for non-watched file: /home/mohaisen_mohammed/xai/app.py
+2025-07-19 12:47:11.892 Received event for non-watched file: /home/mohaisen_mohammed/xai/app.py
+2025-07-19 12:47:11.893 Received event for non-watched file: /home/mohaisen_mohammed/xai/app.py
+2025-07-19 12:52:43.044 Received event for non-watched file: /home/mohaisen_mohammed/xai/app.py
+2025-07-19 12:52:43.044 Received event for non-watched file: /home/mohaisen_mohammed/xai/app.py
+2025-07-19 12:52:43.044 Received event for non-watched file: /home/mohaisen_mohammed/xai/app.py
+2025-07-19 12:52:43.044 Received event for non-watched file: /home/mohaisen_mohammed/xai/app.py
+2025-07-19 12:52:43.044 Received event for non-watched file: /home/mohaisen_mohammed/xai/app.py

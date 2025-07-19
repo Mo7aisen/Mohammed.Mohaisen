@@ -1,5 +1,5 @@
-# This file is the central configuration for the entire project.
-# It defines datasets, experiments, and global settings.
+# Extended configuration file incorporating supervisor's meeting notes
+# This includes both initial and extended training configurations
 
 # --- Global Settings ---
 output_base_dir: "./outputs"
@@ -21,46 +21,113 @@ datasets:
     images: "images"
     masks: "masks_png"
 
-# --- Experiment Definitions ---
-# Each key under 'experiments' defines a unique run.
-# The run scripts will iterate through this list.
+# --- Initial Experiment Definitions ---
+# These are the baseline experiments from original config
 experiments:
   unet_montgomery_full_150:
     dataset: montgomery
     epochs: 150
     data_fraction: 1.0
+    # Supervisor notes: good_fitting at epochs 75, 105; overfitting at 150
 
   unet_montgomery_full_50:
     dataset: montgomery
     epochs: 50
     data_fraction: 1.0
+    # Note: Limited epochs, may not reach supervisor's good_fitting points
 
   unet_montgomery_half_150:
     dataset: montgomery
     epochs: 150
     data_fraction: 0.5
+    # Supervisor notes: good_fitting at epochs 115, 140; overfitting at 150
 
   unet_montgomery_half_50:
     dataset: montgomery
     epochs: 50
     data_fraction: 0.5
+    # Note: Limited epochs for supervisor's specifications
 
   unet_jsrt_full_150:
     dataset: jsrt
     epochs: 150
     data_fraction: 1.0
+    # Supervisor notes: good_fitting at epoch 35; overfitting at 150
 
   unet_jsrt_full_50:
     dataset: jsrt
     epochs: 50
     data_fraction: 1.0
+    # Note: May reach good_fitting point at 35
 
   unet_jsrt_half_150:
     dataset: jsrt
     epochs: 150
     data_fraction: 0.5
+    # Supervisor notes: good_fitting at epoch 70; overfitting at 150
 
   unet_jsrt_half_50:
     dataset: jsrt
     epochs: 50
     data_fraction: 0.5
+    # Note: Limited epochs
+
+# --- Extended Experiment Definitions ---
+# These follow supervisor's meeting notes for overfitting demonstration
+extended_experiments:
+  unet_montgomery_full_250:
+    dataset: montgomery
+    epochs: 250
+    data_fraction: 1.0
+    resume_from: "unet_montgomery_full_150"
+    # Supervisor notes: overfitting at epoch 250
+
+  unet_montgomery_half_300:
+    dataset: montgomery
+    epochs: 300
+    data_fraction: 0.5
+    resume_from: "unet_montgomery_half_150"
+    # Supervisor notes: overfitting at epoch 300
+
+  unet_jsrt_half_250:
+    dataset: jsrt
+    epochs: 250
+    data_fraction: 0.5
+    resume_from: "unet_jsrt_half_150"
+    # Supervisor notes: overfitting at epoch 250
+
+# --- Supervisor's Epoch Specifications ---
+# Based on meeting notes for XAI analysis
+supervisor_epoch_mapping:
+  montgomery_full:
+    underfitting: [5]
+    good_fitting: [75, 105]
+    overfitting: [250]  # Requires extended training
+
+  montgomery_half:
+    underfitting: [10]
+    good_fitting: [115, 140]
+    overfitting: [300]  # Requires extended training
+
+  jsrt_full:
+    underfitting: [5]
+    good_fitting: [35]
+    overfitting: [150]  # Available from initial training
+
+  jsrt_half:
+    underfitting: [5]
+    good_fitting: [70]
+    overfitting: [250]  # Requires extended training
+
+# --- Training Strategy Notes ---
+# From supervisor meeting:
+# 1. Initial training (50 & 150 epochs) provides baseline
+# 2. Extended training (250-300 epochs) demonstrates clear overfitting
+# 3. Evaluation uses specific epochs per supervisor's analysis
+# 4. XAI comparison across fitting states shows model behavior evolution
+
+# --- Extended Training Settings ---
+extended_training:
+  save_freq: 10  # Save every 10 epochs for extended training
+  monitor_overfitting: true
+  detailed_logging: true

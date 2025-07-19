@@ -1,0 +1,88 @@
+nohup: ignoring input
+[0;36m========================================================[0m
+[0;36m    CONTINUE XAI PIPELINE FROM FAILURE POINT[0m
+[0;36m========================================================[0m
+🔄 Continuing XAI pipeline execution...
+📅 Restart time: 2025. júl. 19., szombat, 10:51:03 CEST
+📝 Continue log: pipeline_logs/continue_pipeline_20250719_105103.log
+
+[0;34m[STATUS][0m Checking current pipeline status
+
+📊 CURRENT STATUS SUMMARY:
+
+🚀 Initial Training Status:
+[0;32m✓[0m unet_montgomery_full_150
+[0;32m✓[0m unet_montgomery_full_50
+[0;32m✓[0m unet_montgomery_half_150
+[0;32m✓[0m unet_montgomery_half_50
+[0;32m✓[0m unet_jsrt_full_150
+[0;32m✓[0m unet_jsrt_full_50
+[0;32m✓[0m unet_jsrt_half_150
+[0;32m✓[0m unet_jsrt_half_50
+  Complete: 8/8
+
+📈 Extended Training Status:
+[0;32m✓[0m unet_montgomery_full_250
+[0;32m✓[0m unet_montgomery_half_300
+[0;32m✓[0m unet_jsrt_half_250
+  Complete: 3/3
+
+🔬 Evaluation Status:
+  Standard evaluations: 72/72
+  Extended evaluations: 0/27
+
+⚠️  Extended evaluation incomplete - this is where we'll continue
+[0;35mℹ[0m Continuing from extended evaluation...
+[0;34m[CONTINUE][0m Continuing from extended evaluation failure point
+[0;35mℹ[0m Updating extended evaluation script...
+[1;33m⚠[0m Using current run_extended_evaluation.sh (may need manual update)
+[0;34m[EVAL_EXT][0m Running fixed extended evaluation
+[0;35mℹ[0m Running: fixed_extended_evaluation
+[0;35mℹ[0m Command: ./run_extended_evaluation.sh
+[0;35mℹ[0m Log file: pipeline_logs/continue_fixed_extended_evaluation.log
+[0;32m✓[0m COMPLETED: fixed_extended_evaluation
+[0;34m[VALIDATE][0m Running final validation
+[0;34m[REPORT][0m Generating completion report
+XAI PIPELINE - CONTINUATION COMPLETION REPORT
+=============================================
+
+Continuation Summary:
+  Restart Time: 
+  End Time: 2025. júl. 19., szombat, 11:19:49 CEST
+
+Status Check Results:
+  Models Available:
+11
+  Evaluation Summaries:
+99
+
+Available Models:
+  ✓ unet_jsrt_full_150
+  ✓ unet_jsrt_full_50
+  ✓ unet_jsrt_half_150
+  ✓ unet_jsrt_half_250
+  ✓ unet_jsrt_half_50
+  ✓ unet_montgomery_full_150
+  ✓ unet_montgomery_full_250
+  ✓ unet_montgomery_full_50
+  ✓ unet_montgomery_half_150
+  ✓ unet_montgomery_half_300
+  ✓ unet_montgomery_half_50
+
+Extended Models Status:
+  ✓ unet_montgomery_full_250 (trained)
+    Evaluations: 9/9
+  ✓ unet_montgomery_half_300 (trained)
+    Evaluations: 9/9
+  ✓ unet_jsrt_half_250 (trained)
+    Evaluations: 9/9
+
+Next Steps:
+  1. Check evaluation completeness above
+  2. Launch dashboard: streamlit run app.py
+  3. Analyze results with supervisor's specifications
+
+[0;32m✓[0m Report saved: pipeline_logs/continue_completion_report.txt
+[0;36m========================================================[0m
+[0;36m    PIPELINE CONTINUATION COMPLETED! 🎉[0m
+[0;36m========================================================[0m

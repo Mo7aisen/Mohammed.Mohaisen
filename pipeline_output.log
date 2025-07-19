@@ -1,0 +1,100 @@
+nohup: ignoring input
+[0;32m✓[0m Progress monitor created: ./monitor_progress.sh
+🚀 STARTING COMPLETE XAI PIPELINE REBUILD
+📝 This will run EVERYTHING from scratch with supervisor's specifications
+🔒 SSH-safe execution with nohup
+
+[0;36m========================================================[0m
+[0;36m    XAI LUNG SEGMENTATION - COMPLETE PIPELINE REBUILD[0m
+[0;36m========================================================[0m
+🚀 Starting complete pipeline execution...
+📅 Started at: 2025. júl. 19., szombat, 01:27:52 CEST
+🖥️  Running on: phoenix2
+📂 Working directory: /home/mohaisen_mohammed/xai
+📝 Main log: pipeline_logs/master_pipeline_20250719_012752.log
+
+[0;34m[PREREQ][0m Checking prerequisites and environment
+[0;32m✓[0m Conda environment: bme
+[0;32m✓[0m GPU available: NVIDIA TITAN Xp
+[0;32m✓[0m config.yaml found
+[0;32m✓[0m train.py found
+[0;32m✓[0m evaluate.py found
+[0;32m✓[0m app.py found
+[0;32m✓[0m model.py found
+[0;32m✓[0m data_loader.py found
+[0;32m✓[0m utils.py found
+[0;35mℹ[0m Checking Python packages...
+✓ All packages available
+[0;32m✓[0m All Python packages available
+[0;34m[PLAN][0m Showing complete pipeline execution plan
+
+🎯 COMPLETE PIPELINE EXECUTION PLAN:
+
+Phase 1: Initial Training (8 experiments)
+  • Montgomery Full: 50, 150 epochs
+  • Montgomery Half: 50, 150 epochs
+  • JSRT Full: 50, 150 epochs
+  • JSRT Half: 50, 150 epochs
+
+Phase 2: Extended Training (3 experiments)
+  • Montgomery Full → 250 epochs (overfitting)
+  • Montgomery Half → 300 epochs (overfitting)
+  • JSRT Half → 250 epochs (overfitting)
+
+Phase 3: Comprehensive Evaluation
+  • All models × 3 states × 3 splits = 99 evaluations
+  • Using supervisor's exact epoch specifications
+
+Phase 4: Validation & Dashboard
+  • Validate all supervisor requirements met
+  • Prepare for Streamlit dashboard
+
+📊 Supervisor's Epoch Specifications:
+  Montgomery Full: 5→75,105→250
+  Montgomery Half: 10→115,140→300
+  JSRT Full: 5→35→150
+  JSRT Half: 5→70→250
+
+[0;34m[CLEANUP][0m Removing old results to start fresh
+[0;35mℹ[0m Removing old outputs directory...
+[0;32m✓[0m Old outputs removed
+[0;32m✓[0m Clean environment prepared
+[0;34m[TRAIN1][0m Phase 1: Initial Training (50 & 150 epochs)
+[0;35mℹ[0m Running: initial_training
+[0;35mℹ[0m Command: ./run_training.sh
+[0;35mℹ[0m Log file: pipeline_logs/initial_training.log
+[0;32m✓[0m COMPLETED: initial_training
+[0;34m[TRAIN2][0m Phase 2: Extended Training (250 & 300 epochs)
+[0;35mℹ[0m Running: extended_training
+[0;35mℹ[0m Command: ./run_extended_training.sh
+[0;35mℹ[0m Log file: pipeline_logs/extended_training.log
+[0;32m✓[0m COMPLETED: extended_training
+[0;34m[EVAL1][0m Phase 3a: Standard Model Evaluation
+[0;35mℹ[0m Running: standard_evaluation
+[0;35mℹ[0m Command: ./run_evaluation.sh
+[0;35mℹ[0m Log file: pipeline_logs/standard_evaluation.log
+[0;32m✓[0m COMPLETED: standard_evaluation
+[0;34m[EVAL2][0m Phase 3b: Extended Model Evaluation
+[0;35mℹ[0m Running: extended_evaluation
+[0;35mℹ[0m Command: ./run_extended_evaluation.sh
+[0;35mℹ[0m Log file: pipeline_logs/extended_evaluation.log
+[0;31m✗[0m FAILED: extended_evaluation
+[0;31m✗[0m Check log: pipeline_logs/extended_evaluation.log
+[0;31m✗[0m Last 10 lines of log:
+  • Good Fitting: Epoch 70
+  • Overfitting: Epoch 250
+  
+  🔄 This script will:
+  1. Backup existing evaluation results
+  2. Clear old evaluations
+  3. Re-run evaluation with supervisor's exact epochs
+  4. Use the updated evaluate.py with hardcoded epoch mapping
+  
+  ./run_extended_evaluation.sh: line 114: read: read error: 0: Bad file descriptor
+[0;31m✗[0m Extended evaluation failed!
+
+[0;36m========================================================[0m
+[0;36m    PIPELINE INTERRUPTED OR FAILED ❌[0m
+[0;36m========================================================[0m
+[0;31m✗[0m Exit code: 1
+[0;35mℹ[0m Check logs in: pipeline_logs/
